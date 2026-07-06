@@ -2,6 +2,24 @@
 
 A complete computer vision platform MVP built with React, TypeScript, Tailwind CSS, and Supabase. This project implements four core modules for dataset management, annotation, workflow building, and public dataset sharing.
 
+> **Current status:** the repo is partially production-ready and now passes `typecheck`, `build`, and `lint`.
+>
+> **Completed**
+> - Cloud/local storage switcher and storage setup page
+> - Browser-backed local mode for offline-style project data
+> - Project, dataset, class, annotation, workflow, and public dataset flows wired through the storage layer
+> - Import/export support, including JSON project bundles and COCO/YOLO dataset export
+> - Review-status and attribution schema migrations
+> - `.bolt` cleanup from the repository
+>
+> **Left to complete**
+> - True filesystem-backed local persistence
+> - Authentication and user account flows
+> - Production-grade Supabase RLS and permission model
+> - Realtime collaboration / syncing
+> - More complete binary asset round-tripping for import/export
+> - Bundle splitting and further performance hardening
+
 ## Features
 
 ### Module 1: Dataset Management

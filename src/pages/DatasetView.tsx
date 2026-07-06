@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Download, Upload as UploadIcon } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { ProjectImage } from '@/types';
+import { storage } from '@/lib/storage';
+
+const FILTERS = ['all', 'annotated', 'unlabeled'] as const;
 
 const DatasetView = () => {
   const { id } = useParams<{ id: string }>();
@@ -11,27 +13,22 @@ const DatasetView = () => {
   const [filter, setFilter] = useState<'all' | 'annotated' | 'unlabeled'>('all');
   const [search, setSearch] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'json' | 'coco' | 'yolo'>('json');
 
-  useEffect(() => {
-    if (id) loadImages();
-  }, [id]);
-
-  const loadImages = async () => {
+  const loadImages = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('images')
-        .select('*')
-        .eq('projectId', id)
-        .order('uploadedAt', { ascending: false });
-
-      if (error) throw error;
-      setImages(data || []);
+      if (!id) return;
+      setImages(await storage.listImages(id));
     } catch (err) {
       console.error('Error loading images:', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    void loadImages();
+  }, [loadImages]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || !id) return;
@@ -41,20 +38,7 @@ const DatasetView = () => {
 
     try {
       for (const file of files) {
-        const filename = `${Date.now()}-${file.name}`;
-        const { data, error } = await supabase.storage
-          .from('project-images')
-          .upload(`${id}/${filename}`, file);
-
-        if (error) throw error;
-
-        await supabase.from('images').insert({
-          projectId: id,
-          fileName: file.name,
-          storageUrl: data.path,
-          split: 'train',
-          annotated: false,
-        });
+        await storage.uploadImage(id, file);
       }
 
       await loadImages();
@@ -68,23 +52,65 @@ const DatasetView = () => {
   const handleExport = async () => {
     setExporting(true);
     try {
-      // Simple export as JSON for now
-      const exportData = {
-        projectId: id,
-        exportDate: new Date().toISOString(),
-        images: filteredImages.map(img => ({
-          fileName: img.fileName,
-          split: img.split,
-          annotated: img.annotated,
-        })),
+      if (!id) return;
+      const blob = await storage.exportProjectJSON(id);
+      const exportData = JSON.parse(await blob.text()) as {
+        project?: { name?: string; taskType?: string };
+        images: ProjectImage[];
+        classes: { id: string; name: string; color: string }[];
+        annotations: Array<{
+          imageId: string;
+          type: 'bbox' | 'polygon';
+          classId: string;
+          className: string;
+          color: string;
+          x?: number;
+          y?: number;
+          width?: number;
+          height?: number;
+          points?: { x: number; y: number }[];
+        }>;
       };
+      const payload =
+        exportFormat === 'coco'
+          ? {
+              info: { description: exportData.project?.name || 'AnnotatOR export', version: '1.0' },
+              images: exportData.images.map((image, index) => ({ id: image.id, file_name: image.fileName, split: image.split, annotated: image.annotated, index })),
+              categories: exportData.classes.map((cls, index) => ({ id: index + 1, name: cls.name, color: cls.color })),
+              annotations: exportData.annotations.map((ann, index) => ({
+                id: index + 1,
+                image_id: ann.imageId,
+                category_name: ann.className,
+                bbox: ann.type === 'bbox' ? [ann.x || 0, ann.y || 0, ann.width || 0, ann.height || 0] : undefined,
+                segmentation:
+                  ann.type === 'polygon' && ann.points
+                    ? [ann.points.flatMap((point) => [point.x, point.y])]
+                    : undefined,
+                type: ann.type,
+              })),
+            }
+          : exportFormat === 'yolo'
+            ? {
+                classes: exportData.classes.map((cls) => cls.name),
+                images: exportData.images.map((image) => ({
+                  id: image.id,
+                  fileName: image.fileName,
+                  labels: exportData.annotations
+                    .filter((ann) => ann.imageId === image.id && ann.type === 'bbox')
+                    .map((ann) => ({
+                      className: ann.className,
+                      x: ann.x || 0,
+                      y: ann.y || 0,
+                      width: ann.width || 0,
+                      height: ann.height || 0,
+                    })),
+                })),
+              }
+            : exportData;
 
       const element = document.createElement('a');
-      element.setAttribute(
-        'href',
-        'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(exportData, null, 2))
-      );
-      element.setAttribute('download', `dataset-${id}-export.json`);
+      element.setAttribute('href', 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(payload, null, 2)));
+      element.setAttribute('download', `dataset-${id}-export.${exportFormat === 'json' ? 'json' : exportFormat === 'coco' ? 'coco.json' : 'yolo.json'}`);
       element.style.display = 'none';
       document.body.appendChild(element);
       element.click();
@@ -123,8 +149,17 @@ const DatasetView = () => {
             className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
           >
             <Download className="w-4 h-4" />
-            Export
+            Export {exportFormat.toUpperCase()}
           </button>
+          <select
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as typeof exportFormat)}
+            className="px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg focus:outline-none focus:border-blue-500"
+          >
+            <option value="json">JSON</option>
+            <option value="coco">COCO</option>
+            <option value="yolo">YOLO</option>
+          </select>
           <label className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors cursor-pointer">
             <UploadIcon className="w-4 h-4" />
             Upload
@@ -149,7 +184,12 @@ const DatasetView = () => {
         />
         <select
           value={filter}
-          onChange={(e) => setFilter(e.target.value as any)}
+          onChange={(e) => {
+            const nextFilter = FILTERS.includes(e.target.value as (typeof FILTERS)[number])
+              ? (e.target.value as (typeof FILTERS)[number])
+              : 'all';
+            setFilter(nextFilter);
+          }}
           className="px-4 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg focus:outline-none focus:border-blue-500"
         >
           <option value="all">All Images</option>
@@ -171,7 +211,7 @@ const DatasetView = () => {
               className="group relative aspect-square bg-gray-800 rounded-lg overflow-hidden hover:border-blue-500 border border-gray-700 transition-colors cursor-pointer"
             >
               <img
-                src={`${supabase.storage.from('project-images').getPublicUrl(img.storageUrl).data.publicUrl}`}
+                src={img.storageUrl}
                 alt={img.fileName}
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform"
               />

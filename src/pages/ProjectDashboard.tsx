@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Upload, Settings, Workflow } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { Project } from '@/types';
+import { storage } from '@/lib/storage';
 
 const ProjectDashboard = () => {
   const { id } = useParams<{ id: string }>();
@@ -11,37 +11,27 @@ const ProjectDashboard = () => {
   const [splits, setSplits] = useState({ train: 70, val: 15, test: 15 });
 
   useEffect(() => {
-    if (id) loadProject();
+    void (async () => {
+      if (!id) return;
+      try {
+        const data = await storage.getProject(id);
+        if (data) {
+          setProject(data);
+          setSplits(data.splits);
+        }
+      } catch (err) {
+        console.error('Error loading project:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [id]);
-
-  const loadProject = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('projects')
-        .select('*')
-        .eq('id', id)
-        .single();
-
-      if (error) throw error;
-      setProject(data);
-      setSplits(data.splits);
-    } catch (err) {
-      console.error('Error loading project:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const updateSplits = async () => {
     if (!id || !project) return;
     try {
-      const { error } = await supabase
-        .from('projects')
-        .update({ splits: { ...splits } })
-        .eq('id', id);
-
-      if (error) throw error;
-      setProject({ ...project, splits });
+      const data = await storage.updateProject(id, { splits: { ...splits } });
+      setProject(data);
     } catch (err) {
       console.error('Error updating splits:', err);
     }

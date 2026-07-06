@@ -1,16 +1,19 @@
-﻿import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Upload, Plus, X } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { storage } from '@/lib/storage';
 
 const PRESET_COLORS = [
   '#EF4444', '#F97316', '#F59E0B', '#22C55E', '#3B82F6',
   '#8B5CF6', '#EC4899', '#14B8A6', '#64748B',
 ];
 
+const TASK_TYPES = ['detection', 'classification', 'segmentation'] as const;
+
 const UploadDataset = () => {
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
+  const [localMode, setLocalMode] = useState(false);
   const [form, setForm] = useState({
     name: '',
     description: '',
@@ -24,13 +27,19 @@ const UploadDataset = () => {
   const [tagInput, setTagInput] = useState('');
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
 
+  useEffect(() => {
+    void (async () => {
+      const status = await storage.getStatus();
+      setLocalMode(status.mode === 'local');
+    })();
+  }, []);
+
   const addClass = () => {
     if (!newClassName.trim()) return;
-    setClasses([...classes, {
-      name: newClassName.trim(),
-      color: PRESET_COLORS[classes.length % PRESET_COLORS.length],
-      count: 0,
-    }]);
+    setClasses([
+      ...classes,
+      { name: newClassName.trim(), color: PRESET_COLORS[classes.length % PRESET_COLORS.length], count: 0 },
+    ]);
     setNewClassName('');
   };
 
@@ -53,17 +62,9 @@ const UploadDataset = () => {
   const handlePreviewUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const files = Array.from(e.target.files).slice(0, 4 - previewUrls.length);
-
     for (const file of files) {
-      const filename = `universe-preview-${Date.now()}-${file.name}`;
-      const { data, error } = await supabase.storage
-        .from('project-images')
-        .upload(`universe-previews/${filename}`, file);
-
-      if (!error && data) {
-        const url = supabase.storage.from('project-images').getPublicUrl(data.path).data.publicUrl;
-        setPreviewUrls(prev => [...prev, url]);
-      }
+      const url = URL.createObjectURL(file);
+      setPreviewUrls((prev) => [...prev, url]);
     }
   };
 
@@ -73,7 +74,7 @@ const UploadDataset = () => {
 
     setSaving(true);
     try {
-      const { error } = await supabase.from('public_datasets').insert({
+      await storage.publishDataset({
         name: form.name,
         description: form.description,
         taskType: form.taskType,
@@ -87,8 +88,6 @@ const UploadDataset = () => {
         authorName: form.authorName || 'Anonymous',
         isPublic: true,
       });
-
-      if (error) throw error;
       navigate('/universe');
     } catch (err) {
       console.error('Error publishing dataset:', err);
@@ -105,10 +104,14 @@ const UploadDataset = () => {
       </Link>
 
       <h1 className="text-3xl font-bold text-white mb-2">Publish Dataset</h1>
-      <p className="text-gray-400 mb-8">Share your dataset with the community</p>
+      <p className="text-gray-400 mb-2">Share your dataset with the community</p>
+      {localMode && (
+        <p className="text-sm text-yellow-400 mb-8">
+          Local mode is active, so this dataset will stay on this device until you switch to cloud storage or export it.
+        </p>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Basic info */}
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">Dataset Name *</label>
@@ -138,7 +141,12 @@ const UploadDataset = () => {
               <label className="block text-sm font-medium text-gray-300 mb-1">Task Type</label>
               <select
                 value={form.taskType}
-                onChange={(e) => setForm({ ...form, taskType: e.target.value as any })}
+                onChange={(e) => {
+                  const nextTaskType = TASK_TYPES.includes(e.target.value as (typeof TASK_TYPES)[number])
+                    ? (e.target.value as (typeof TASK_TYPES)[number])
+                    : 'detection';
+                  setForm({ ...form, taskType: nextTaskType });
+                }}
                 className="w-full px-4 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg focus:outline-none focus:border-blue-500"
               >
                 <option value="detection">Object Detection</option>
@@ -170,7 +178,6 @@ const UploadDataset = () => {
           </div>
         </div>
 
-        {/* Classes */}
         <div className="p-4 bg-gray-800 border border-gray-700 rounded-lg">
           <h3 className="text-sm font-medium text-gray-300 mb-3">Label Classes</h3>
           <div className="flex gap-2 mb-3">
@@ -208,7 +215,6 @@ const UploadDataset = () => {
           )}
         </div>
 
-        {/* Tags */}
         <div className="p-4 bg-gray-800 border border-gray-700 rounded-lg">
           <h3 className="text-sm font-medium text-gray-300 mb-3">Tags</h3>
           <div className="flex gap-2 mb-3">
@@ -242,7 +248,6 @@ const UploadDataset = () => {
           )}
         </div>
 
-        {/* Preview images */}
         <div className="p-4 bg-gray-800 border border-gray-700 rounded-lg">
           <h3 className="text-sm font-medium text-gray-300 mb-3">Preview Images (up to 4)</h3>
           <div className="grid grid-cols-4 gap-2 mb-3">
@@ -273,7 +278,6 @@ const UploadDataset = () => {
           </div>
         </div>
 
-        {/* Submit */}
         <div className="flex gap-3">
           <button
             type="submit"

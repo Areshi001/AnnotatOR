@@ -1,8 +1,8 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Heart, GitFork, Image as ImageIcon, Tag, User, Calendar } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { ArrowLeft, Heart, GitFork, User, Calendar } from 'lucide-react';
 import { PublicDataset } from '@/types';
+import { storage } from '@/lib/storage';
 
 const DatasetDetail = () => {
   const { datasetId } = useParams<{ datasetId: string }>();
@@ -13,40 +13,30 @@ const DatasetDetail = () => {
   const [forking, setForking] = useState(false);
 
   useEffect(() => {
-    if (datasetId) loadDataset();
+    void (async () => {
+      if (!datasetId) return;
+      try {
+        const datasets = await storage.listPublicDatasets();
+        setDataset(datasets.find((item) => item.id === datasetId) || null);
+      } catch (err) {
+        console.error('Error loading dataset:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [datasetId]);
-
-  const loadDataset = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('public_datasets')
-        .select('*')
-        .eq('id', datasetId)
-        .single();
-
-      if (error) throw error;
-      setDataset(data);
-    } catch (err) {
-      console.error('Error loading dataset:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const toggleLike = async () => {
     if (!dataset) return;
-    const userId = 'anonymous-user'; // In a real app, use auth user ID
+    const userId = 'anonymous-user';
 
     try {
-      if (liked) {
-        await supabase.from('dataset_likes').delete().eq('datasetId', dataset.id).eq('userId', userId);
-        setDataset({ ...dataset, likeCount: dataset.likeCount - 1 });
-        setLiked(false);
-      } else {
-        await supabase.from('dataset_likes').insert({ datasetId: dataset.id, userId });
-        setDataset({ ...dataset, likeCount: dataset.likeCount + 1 });
-        setLiked(true);
-      }
+      await storage.likeDataset(dataset.id, userId);
+      setDataset({
+        ...dataset,
+        likeCount: liked ? Math.max(0, dataset.likeCount - 1) : dataset.likeCount + 1,
+      });
+      setLiked(!liked);
     } catch (err) {
       console.error('Error toggling like:', err);
     }
@@ -56,27 +46,7 @@ const DatasetDetail = () => {
     if (!dataset) return;
     setForking(true);
     try {
-      // Create a new project from this dataset
-      const { data: project, error } = await supabase
-        .from('projects')
-        .insert({
-          name: `${dataset.name} (Fork)`,
-          taskType: dataset.taskType,
-          imageCount: dataset.imageCount,
-          splits: { train: 70, val: 15, test: 15 },
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      // Increment fork count
-      await supabase
-        .from('public_datasets')
-        .update({ forkCount: dataset.forkCount + 1 })
-        .eq('id', dataset.id);
-
-      // Navigate to the new project
+      const project = await storage.forkDataset(dataset.id);
       navigate(`/project/${project.id}`);
     } catch (err) {
       console.error('Error forking dataset:', err);
@@ -100,7 +70,6 @@ const DatasetDetail = () => {
         Back to Universe
       </Link>
 
-      {/* Header */}
       <div className="mb-8">
         <div className="flex items-start justify-between mb-4">
           <div>
@@ -114,18 +83,21 @@ const DatasetDetail = () => {
                 <Calendar className="w-4 h-4" />
                 {new Date(dataset.createdAt).toLocaleDateString()}
               </span>
-              <span className={`px-2 py-0.5 rounded capitalize ${
-                dataset.taskType === 'detection' ? 'bg-blue-900/50 text-blue-400' :
-                dataset.taskType === 'classification' ? 'bg-green-900/50 text-green-400' :
-                'bg-purple-900/50 text-purple-400'
-              }`}>
+              <span
+                className={`px-2 py-0.5 rounded capitalize ${
+                  dataset.taskType === 'detection'
+                    ? 'bg-blue-900/50 text-blue-400'
+                    : dataset.taskType === 'classification'
+                      ? 'bg-green-900/50 text-green-400'
+                      : 'bg-purple-900/50 text-purple-400'
+                }`}
+              >
                 {dataset.taskType}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Actions */}
         <div className="flex gap-3">
           <button
             onClick={toggleLike}
@@ -149,7 +121,6 @@ const DatasetDetail = () => {
         </div>
       </div>
 
-      {/* Description */}
       {dataset.description && (
         <div className="mb-8">
           <h2 className="text-lg font-semibold text-white mb-2">Description</h2>
@@ -157,7 +128,6 @@ const DatasetDetail = () => {
         </div>
       )}
 
-      {/* Stats */}
       <div className="grid grid-cols-3 gap-4 mb-8">
         <div className="p-4 bg-gray-800 border border-gray-700 rounded-lg text-center">
           <p className="text-2xl font-bold text-blue-400">{dataset.imageCount}</p>
@@ -173,7 +143,6 @@ const DatasetDetail = () => {
         </div>
       </div>
 
-      {/* Classes */}
       {dataset.classes && dataset.classes.length > 0 && (
         <div className="mb-8">
           <h2 className="text-lg font-semibold text-white mb-4">Classes</h2>
@@ -191,7 +160,6 @@ const DatasetDetail = () => {
         </div>
       )}
 
-      {/* Tags */}
       {dataset.tags && dataset.tags.length > 0 && (
         <div className="mb-8">
           <h2 className="text-lg font-semibold text-white mb-3">Tags</h2>
@@ -205,7 +173,6 @@ const DatasetDetail = () => {
         </div>
       )}
 
-      {/* Preview images */}
       {dataset.previewImages && dataset.previewImages.length > 0 && (
         <div>
           <h2 className="text-lg font-semibold text-white mb-4">Preview</h2>

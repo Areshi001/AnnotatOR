@@ -1,52 +1,44 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Loader } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { Plus, Loader, Upload } from 'lucide-react';
 import { Project } from '@/types';
+import { storage } from '@/lib/storage';
+
+const TASK_TYPES = ['detection', 'classification', 'segmentation'] as const;
 
 const ProjectList = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [newProject, setNewProject] = useState({ name: '', taskType: 'detection' as const });
+  const [newProject, setNewProject] = useState<{ name: string; taskType: Project['taskType'] }>({
+    name: '',
+    taskType: 'detection',
+  });
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
-    loadProjects();
+    void (async () => {
+      try {
+        setProjects(await storage.listProjects());
+      } catch (err) {
+        console.error('Error loading projects:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
-
-  const loadProjects = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('projects')
-        .select('*')
-        .order('updatedAt', { ascending: false });
-
-      if (error) throw error;
-      setProjects(data || []);
-    } catch (err) {
-      console.error('Error loading projects:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const createProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProject.name.trim()) return;
 
     try {
-      const { data, error } = await supabase
-        .from('projects')
-        .insert({
-          name: newProject.name,
-          taskType: newProject.taskType,
-          imageCount: 0,
-          splits: { train: 70, val: 15, test: 15 },
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
+      const data = await storage.createProject({
+        name: newProject.name,
+        taskType: newProject.taskType,
+        imageCount: 0,
+        splits: { train: 70, val: 15, test: 15 },
+      });
       setProjects([data, ...projects]);
       setNewProject({ name: '', taskType: 'detection' });
       setShowCreate(false);
@@ -58,10 +50,24 @@ const ProjectList = () => {
   const deleteProject = async (id: string) => {
     if (!window.confirm('Delete this project?')) return;
     try {
-      await supabase.from('projects').delete().eq('id', id);
+      await storage.deleteProject(id);
       setProjects(projects.filter(p => p.id !== id));
     } catch (err) {
       console.error('Error deleting project:', err);
+    }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0]) return;
+    setImporting(true);
+    try {
+      await storage.importProjectJSON(e.target.files[0]);
+      setProjects(await storage.listProjects());
+    } catch (err) {
+      console.error('Error importing project bundle:', err);
+    } finally {
+      setImporting(false);
+      e.target.value = '';
     }
   };
 
@@ -77,13 +83,20 @@ const ProjectList = () => {
     <div className="p-8">
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold text-white">Projects</h1>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          New Project
-        </button>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors cursor-pointer">
+            <Upload className="w-5 h-5" />
+            {importing ? 'Importing...' : 'Import'}
+            <input type="file" accept="application/json" onChange={handleImport} className="hidden" />
+          </label>
+          <button
+            onClick={() => setShowCreate(!showCreate)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            New Project
+          </button>
+        </div>
       </div>
 
       {showCreate && (
@@ -97,7 +110,12 @@ const ProjectList = () => {
           />
           <select
             value={newProject.taskType}
-            onChange={(e) => setNewProject({ ...newProject, taskType: e.target.value as any })}
+            onChange={(e) => {
+              const nextTaskType = TASK_TYPES.includes(e.target.value as (typeof TASK_TYPES)[number])
+                ? (e.target.value as (typeof TASK_TYPES)[number])
+                : 'detection';
+              setNewProject({ ...newProject, taskType: nextTaskType });
+            }}
             className="w-full px-4 py-2 mb-4 bg-gray-700 border border-gray-600 text-white rounded-lg focus:outline-none focus:border-blue-500"
           >
             <option value="detection">Object Detection</option>

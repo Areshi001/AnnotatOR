@@ -1,8 +1,8 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Palette } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { LabelClass } from '@/types';
+import { storage } from '@/lib/storage';
 
 const PRESET_COLORS = [
   '#EF4444', '#F97316', '#F59E0B', '#84CC16', '#22C55E',
@@ -20,42 +20,27 @@ const ClassManager = () => {
   const [editName, setEditName] = useState('');
 
   useEffect(() => {
-    if (id) loadClasses();
+    void (async () => {
+      if (!id) return;
+      try {
+        setClasses(await storage.listClasses(id));
+      } catch (err) {
+        console.error('Error loading classes:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [id]);
-
-  const loadClasses = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('label_classes')
-        .select('*')
-        .eq('projectId', id)
-        .order('createdAt', { ascending: true });
-
-      if (error) throw error;
-      setClasses(data || []);
-    } catch (err) {
-      console.error('Error loading classes:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const createClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClass.name.trim() || !id) return;
 
     try {
-      const { data, error } = await supabase
-        .from('label_classes')
-        .insert({
-          projectId: id,
-          name: newClass.name.trim(),
-          color: newClass.color,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
+      const data = await storage.saveClass(id, {
+        name: newClass.name.trim(),
+        color: newClass.color,
+      });
       setClasses([...classes, data]);
       setNewClass({ name: '', color: PRESET_COLORS[(classes.length) % PRESET_COLORS.length] });
       setShowCreate(false);
@@ -65,14 +50,12 @@ const ClassManager = () => {
   };
 
   const updateClass = async (classId: string) => {
-    if (!editName.trim()) return;
+    if (!editName.trim() || !id) return;
     try {
-      await supabase
-        .from('label_classes')
-        .update({ name: editName.trim() })
-        .eq('id', classId);
-
-      setClasses(classes.map(c => c.id === classId ? { ...c, name: editName.trim() } : c));
+      const current = classes.find((item) => item.id === classId);
+      if (!current) return;
+      const data = await storage.saveClass(id, { ...current, name: editName.trim() });
+      setClasses(classes.map((c) => (c.id === classId ? data : c)));
       setEditingId(null);
     } catch (err) {
       console.error('Error updating class:', err);
@@ -82,8 +65,8 @@ const ClassManager = () => {
   const deleteClass = async (classId: string) => {
     if (!window.confirm('Delete this class? Annotations using this class will lose their label.')) return;
     try {
-      await supabase.from('label_classes').delete().eq('id', classId);
-      setClasses(classes.filter(c => c.id !== classId));
+      await storage.deleteClass(classId);
+      setClasses(classes.filter((c) => c.id !== classId));
     } catch (err) {
       console.error('Error deleting class:', err);
     }
@@ -189,10 +172,7 @@ const ClassManager = () => {
               className="flex items-center gap-4 p-4 bg-gray-800 border border-gray-700 rounded-lg hover:border-gray-600 transition-colors"
             >
               <span className="text-gray-500 text-sm w-6 text-center">{index + 1}</span>
-              <div
-                className="w-5 h-5 rounded flex-shrink-0"
-                style={{ backgroundColor: cls.color }}
-              />
+              <div className="w-5 h-5 rounded flex-shrink-0" style={{ backgroundColor: cls.color }} />
 
               {editingId === cls.id ? (
                 <div className="flex-1 flex items-center gap-2">

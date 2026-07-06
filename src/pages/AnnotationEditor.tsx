@@ -1,9 +1,10 @@
-﻿import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Square, Pentagon, Trash2, Save, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from 'lucide-react';
-import { Stage, Layer, Rect, Line, Image as KonvaImage, Text, Transformer } from 'react-konva';
-import { supabase } from '@/lib/supabase';
+import { ArrowLeft, Square, Pentagon, Trash2, Save, ZoomIn, ZoomOut } from 'lucide-react';
+import { Stage, Layer, Rect, Line, Image as KonvaImage, Text } from 'react-konva';
+import type { KonvaEventObject } from 'konva/lib/Node';
 import { Annotation, LabelClass, ProjectImage } from '@/types';
+import { storage } from '@/lib/storage';
 
 type DrawMode = 'bbox' | 'polygon' | 'select';
 
@@ -26,31 +27,27 @@ const AnnotationEditor = () => {
   const [currentRect, setCurrentRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [polygonPoints, setPolygonPoints] = useState<{ x: number; y: number }[]>([]);
 
-  const stageRef = useRef<any>(null);
+  const loadData = useCallback(async () => {
+    if (!id || !imageId) return;
 
-  useEffect(() => {
-    if (id && imageId) loadData();
-  }, [id, imageId]);
-
-  const loadData = async () => {
     try {
-      const [imgRes, classesRes, annotationsRes] = await Promise.all([
-        supabase.from('images').select('*').eq('id', imageId).single(),
-        supabase.from('label_classes').select('*').eq('projectId', id).order('createdAt'),
-        supabase.from('annotations').select('*').eq('imageId', imageId),
+      const [images, classes, anns] = await Promise.all([
+        storage.listImages(id),
+        storage.listClasses(id),
+        storage.listAnnotations(imageId),
       ]);
 
-      if (imgRes.error) throw imgRes.error;
-      setImage(imgRes.data);
-      setLabelClasses(classesRes.data || []);
-      setAnnotations(annotationsRes.data || []);
+      const currentImage = images.find((item) => item.id === imageId) || null;
+      setImage(currentImage);
+      setLabelClasses(classes || []);
+      setAnnotations(anns || []);
 
-      if (classesRes.data && classesRes.data.length > 0) {
-        setSelectedClass(classesRes.data[0]);
+      if (classes.length > 0) {
+        setSelectedClass(classes[0]);
       }
 
-      // Load image
-      const publicUrl = supabase.storage.from('project-images').getPublicUrl(imgRes.data.storageUrl).data.publicUrl;
+      if (!currentImage) throw new Error('Image not found');
+      const publicUrl = currentImage.storageUrl;
       const img = new window.Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
@@ -70,12 +67,18 @@ const AnnotationEditor = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, imageId]);
 
-  const handleMouseDown = (e: any) => {
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
+
+  const handleMouseDown = (e: KonvaEventObject<MouseEvent>) => {
     if (!selectedClass) return;
     const stage = e.target.getStage();
+    if (!stage) return;
     const pos = stage.getPointerPosition();
+    if (!pos) return;
     const relPos = { x: (pos.x) / scale, y: (pos.y) / scale };
 
     if (drawMode === 'bbox') {
@@ -87,10 +90,12 @@ const AnnotationEditor = () => {
     }
   };
 
-  const handleMouseMove = (e: any) => {
+  const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
     if (!isDrawing || drawMode !== 'bbox') return;
     const stage = e.target.getStage();
+    if (!stage) return;
     const pos = stage.getPointerPosition();
+    if (!pos) return;
     const relPos = { x: pos.x / scale, y: pos.y / scale };
 
     setCurrentRect({
@@ -125,7 +130,7 @@ const AnnotationEditor = () => {
     setCurrentRect(null);
   };
 
-  const finishPolygon = () => {
+  const finishPolygon = useCallback(() => {
     if (polygonPoints.length < 3 || !selectedClass) return;
 
     const newAnnotation: Annotation = {
@@ -141,7 +146,7 @@ const AnnotationEditor = () => {
     };
     setAnnotations([...annotations, newAnnotation]);
     setPolygonPoints([]);
-  };
+  }, [annotations, id, imageId, polygonPoints, selectedClass]);
 
   const deleteAnnotation = (annId: string) => {
     setAnnotations(annotations.filter(a => a.id !== annId));
@@ -150,31 +155,11 @@ const AnnotationEditor = () => {
   const saveAnnotations = async () => {
     setSaving(true);
     try {
-      // Save new annotations (temp ones)
       const newAnnotations = annotations.filter(a => a.id.startsWith('temp-'));
       if (newAnnotations.length > 0) {
-        const toInsert = newAnnotations.map(a => ({
-          projectId: id,
-          imageId: imageId,
-          type: a.type,
-          classId: a.classId,
-          className: a.className,
-          color: a.color,
-          x: a.x || null,
-          y: a.y || null,
-          width: a.width || null,
-          height: a.height || null,
-          points: a.points || null,
-        }));
-
-        const { error } = await supabase.from('annotations').insert(toInsert);
-        if (error) throw error;
-
-        // Mark image as annotated
-        await supabase.from('images').update({ annotated: true }).eq('id', imageId);
+        await storage.saveAnnotations(imageId!, newAnnotations);
       }
 
-      // Reload to get real IDs
       await loadData();
     } catch (err) {
       console.error('Error saving annotations:', err);
@@ -192,7 +177,7 @@ const AnnotationEditor = () => {
     if (e.key === 'Enter' && drawMode === 'polygon') {
       finishPolygon();
     }
-  }, [polygonPoints, drawMode, selectedClass]);
+  }, [drawMode, finishPolygon]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -204,7 +189,6 @@ const AnnotationEditor = () => {
   }
 
   const newAnnotations = annotations.filter(a => a.id.startsWith('temp-'));
-  const savedCount = annotations.length - newAnnotations.length;
 
   return (
     <div className="flex flex-col h-full">
@@ -270,7 +254,6 @@ const AnnotationEditor = () => {
         <div className="flex-1 bg-gray-900 overflow-auto flex items-center justify-center" id="canvas-container">
           {imageObj && (
             <Stage
-              ref={stageRef}
               width={imageSize.width * scale}
               height={imageSize.height * scale}
               scaleX={scale}
@@ -416,7 +399,7 @@ const AnnotationEditor = () => {
               </div>
             ) : (
               <div className="space-y-1">
-                {annotations.map((ann, i) => (
+                {annotations.map((ann) => (
                   <div
                     key={ann.id}
                     className={`flex items-center justify-between px-3 py-2 rounded text-sm ${

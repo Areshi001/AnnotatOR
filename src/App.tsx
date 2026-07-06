@@ -9,6 +9,8 @@ import WorkflowBuilder from '@/pages/WorkflowBuilder';
 import UniverseHome from '@/pages/UniverseHome';
 import DatasetDetail from '@/pages/DatasetDetail';
 import UploadDataset from '@/pages/UploadDataset';
+import NotFound from '@/pages/NotFound';
+import StorageSetup from '@/pages/StorageSetup';
 
 function App() {
   return (
@@ -83,6 +85,22 @@ function App() {
           element={
             <Layout>
               <UploadDataset />
+            </Layout>
+          }
+        />
+        <Route
+          path="/setup"
+          element={
+            <Layout>
+              <StorageSetup />
+            </Layout>
+          }
+        />
+        <Route
+          path="*"
+          element={
+            <Layout>
+              <NotFound />
             </Layout>
           }
         />

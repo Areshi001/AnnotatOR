@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ReactFlow,
@@ -7,15 +7,17 @@ import {
   addEdge,
   useNodesState,
   useEdgesState,
-  Node,
-  Edge,
-  Connection,
+  type Node,
+  type Edge,
+  type Connection,
+  type NodeProps,
   Handle,
   Position,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ArrowLeft, Save, Database, Cpu, Shuffle, Download } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { type Workflow } from '@/types';
+import { storage } from '@/lib/storage';
 
 const NODE_TYPES = {
   loadDataset: { label: 'Load Dataset', icon: Database, color: 'border-blue-500', bg: 'bg-blue-900/30' },
@@ -25,9 +27,12 @@ const NODE_TYPES = {
 };
 
 type NodeType = keyof typeof NODE_TYPES;
+type WorkflowNodeData = { label?: string; description?: string };
+type WorkflowNode = Node<WorkflowNodeData, NodeType>;
+type WorkflowEdge = Edge;
 
-const CustomNode = ({ data, type }: { data: any; type: string }) => {
-  const config = NODE_TYPES[type as NodeType] || NODE_TYPES.loadDataset;
+const CustomNode = ({ data, type }: NodeProps<WorkflowNode>) => {
+  const config = NODE_TYPES[(type ?? 'loadDataset') as NodeType] || NODE_TYPES.loadDataset;
   const Icon = config.icon;
 
   return (
@@ -37,9 +42,7 @@ const CustomNode = ({ data, type }: { data: any; type: string }) => {
         <Icon className="w-4 h-4 text-white" />
         <span className="text-white font-medium text-sm">{data.label || config.label}</span>
       </div>
-      {data.description && (
-        <p className="text-xs text-gray-400 mt-1">{data.description}</p>
-      )}
+      {data.description && <p className="text-xs text-gray-400 mt-1">{data.description}</p>}
       <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-gray-400" />
     </div>
   );
@@ -54,51 +57,53 @@ const nodeTypes = {
 
 const WorkflowBuilder = () => {
   const { id } = useParams<{ id: string }>();
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<WorkflowEdge>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [workflowName, setWorkflowName] = useState('Untitled Workflow');
 
-  useEffect(() => {
-    if (id) loadWorkflow();
-  }, [id]);
-
-  const loadWorkflow = async () => {
+  const loadWorkflow = useCallback(async () => {
+    if (!id) return;
     try {
-      const { data, error } = await supabase
-        .from('workflows')
-        .select('*')
-        .eq('projectId', id)
-        .order('updatedAt', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) throw error;
-
+      const data = await storage.getWorkflow(id);
       if (data) {
         setWorkflowId(data.id);
         setWorkflowName(data.name);
-        const loadedNodes = (data.nodes as any[]) || [];
-        const loadedEdges = (data.edges as any[]) || [];
-        setNodes(loadedNodes.map(n => ({ ...n, type: n.type, data: n.data || {} })));
-        setEdges(loadedEdges);
+        setNodes((data.nodes || []).map((node) => ({ ...node, data: node.data || {} })) as WorkflowNode[]);
+        setEdges(data.edges || []);
       }
     } catch (err) {
       console.error('Error loading workflow:', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, setEdges, setNodes]);
+
+  useEffect(() => {
+    void loadWorkflow();
+  }, [loadWorkflow]);
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#6B7280' } }, eds)),
-    [setEdges]
+    (params: Connection) => {
+      if (!params.source || !params.target) return;
+      const edge: WorkflowEdge = {
+        id: `${params.source}-${params.sourceHandle ?? 'source'}-${params.target}-${params.targetHandle ?? 'target'}`,
+        source: params.source,
+        target: params.target,
+        sourceHandle: params.sourceHandle,
+        targetHandle: params.targetHandle,
+        animated: true,
+        style: { stroke: '#6B7280' },
+      };
+      setEdges((eds) => addEdge(edge, eds));
+    },
+    [setEdges],
   );
 
   const addNode = (type: NodeType) => {
-    const newNode: Node = {
+    const newNode: WorkflowNode = {
       id: `node-${Date.now()}`,
       type,
       position: { x: 250 + Math.random() * 100, y: 100 + nodes.length * 120 },
@@ -108,27 +113,19 @@ const WorkflowBuilder = () => {
   };
 
   const saveWorkflow = async () => {
+    if (!id) return;
     setSaving(true);
     try {
-      const workflowData = {
+      const payload: Workflow = {
+        id: workflowId || `wf-${Date.now()}`,
         projectId: id,
         name: workflowName,
-        nodes: nodes.map(n => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
-        edges: edges.map(e => ({ id: e.id, source: e.source, target: e.target })),
+        nodes: nodes.map((node) => ({ id: node.id, type: node.type, position: node.position, data: node.data })),
+        edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
+        updatedAt: new Date().toISOString(),
       };
-
-      if (workflowId) {
-        await supabase.from('workflows').update(workflowData).eq('id', workflowId);
-      } else {
-        const { data, error } = await supabase
-          .from('workflows')
-          .insert(workflowData)
-          .select()
-          .single();
-
-        if (error) throw error;
-        setWorkflowId(data.id);
-      }
+      await storage.saveWorkflow(id, payload);
+      setWorkflowId(payload.id);
     } catch (err) {
       console.error('Error saving workflow:', err);
     } finally {
@@ -142,7 +139,6 @@ const WorkflowBuilder = () => {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
         <div className="flex items-center gap-4">
           <Link to={`/project/${id}`} className="flex items-center gap-1 text-blue-400 hover:text-blue-300 text-sm">
@@ -185,7 +181,6 @@ const WorkflowBuilder = () => {
         </div>
       </div>
 
-      {/* React Flow canvas */}
       <div className="flex-1">
         <ReactFlow
           nodes={nodes}
