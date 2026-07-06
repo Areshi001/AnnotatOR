@@ -290,9 +290,9 @@ For production, implement proper authentication and tighter RLS policies based o
 ### Current Status: Foundation Complete
 - ✅ Project management basics
 - ✅ Image upload and browser
-- ⏳ Annotation canvas (in progress)
-- ⏳ Workflow builder (in progress)
-- ⏳ Universe hub (in progress)
+-  Annotation canvas (in progress)
+-  Workflow builder (in progress)
+-  Universe hub (in progress)
 
 ### Future Enhancements
 - User authentication with Supabase Auth
