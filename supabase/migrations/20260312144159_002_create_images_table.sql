@@ -1,11 +1,11 @@
-/*
+﻿/*
   # Create images table
 
   1. New Tables
     - `images`
       - `id` (uuid, primary key)
       - `projectId` (uuid, foreign key to projects)
-      - `filename` (text)
+      - `"fileName"` (text)
       - `storageUrl` (text, path in Storage)
       - `split` (enum: train, val, test)
       - `annotated` (boolean, defaults to false)
@@ -19,7 +19,7 @@
 CREATE TABLE IF NOT EXISTS images (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   projectId uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  filename text NOT NULL,
+  "fileName" text NOT NULL,
   storageUrl text NOT NULL,
   split text DEFAULT 'train' CHECK (split IN ('train', 'val', 'test')),
   annotated boolean DEFAULT false,

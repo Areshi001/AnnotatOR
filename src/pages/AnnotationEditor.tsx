@@ -216,7 +216,7 @@ const AnnotationEditor = () => {
             Dataset
           </Link>
           <span className="text-gray-500">|</span>
-          <span className="text-white font-medium text-sm">{image?.filename}</span>
+          <span className="text-white font-medium text-sm">{image?.fileName}</span>
           <span className="text-gray-500 text-xs">{imageSize.width} x {imageSize.height}</span>
         </div>
 

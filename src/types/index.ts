@@ -1,4 +1,4 @@
-export type Project = {
+﻿export type Project = {
   id: string;
   name: string;
   taskType: 'detection' | 'classification' | 'segmentation';
@@ -16,7 +16,7 @@ export type ProjectImage = {
   id: string;
   projectId: string;
   storageUrl: string;
-  filename: string;
+  fileName: string;
   split: 'train' | 'val' | 'test';
   annotated: boolean;
   uploadedAt: string;
